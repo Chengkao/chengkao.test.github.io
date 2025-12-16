@@ -1,0 +1,264 @@
+﻿<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSON 檔案載入刷題系統 (含錯題練習)</title>
+    <style>
+        body { font-family: "Microsoft JhengHei", Arial, sans-serif; background-color: #f4f4f9; padding: 20px; color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        
+        /* 上傳區域樣式 */
+        .upload-section { 
+            background: #e3f2fd; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 2px dashed #2196f3; 
+            text-align: center;
+        }
+        .upload-row { margin: 10px 0; }
+        .status { color: #d32f2f; font-weight: bold; margin-top: 10px; }
+        .status.ready { color: #388e3c; }
+
+        h1 { text-align: center; color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        
+        /* 題目區域 (預設隱藏) */
+        #quiz-area { display: none; }
+        
+        .question-card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .question-title { font-size: 1.1em; font-weight: bold; margin-bottom: 15px; color: #34495e; }
+        .options label { display: block; padding: 10px; margin: 5px 0; border: 1px solid #eee; border-radius: 5px; cursor: pointer; transition: background 0.2s; }
+        .options label:hover { background-color: #f9f9f9; }
+        .options input { margin-right: 10px; }
+
+        .correct { background-color: #d4edda !important; border-color: #c3e6cb !important; color: #155724; }
+        .wrong { background-color: #f8d7da !important; border-color: #f5c6cb !important; color: #721c24; }
+        .answer-hint { display: none; margin-top: 10px; font-size: 0.9em; color: #d9534f; font-weight: bold; }
+        
+        button { color: white; border: none; padding: 12px 30px; font-size: 1em; border-radius: 25px; cursor: pointer; margin: 10px 5px; transition: 0.3s; }
+        .btn-submit { background-color: #3498db; }
+        .btn-submit:hover { background-color: #2980b9; }
+        
+        .btn-reset { background-color: #7f8c8d; }
+        .btn-reset:hover { background-color: #636e72; }
+
+        /* 錯題按鈕樣式 */
+        .btn-retry-wrong { background-color: #e67e22; display: none; } /* 預設隱藏 */
+        .btn-retry-wrong:hover { background-color: #d35400; }
+
+        .score-board { text-align: center; font-size: 1.5em; margin: 20px 0; padding: 15px; background: #e8f5e9; border-radius: 8px; display: none; }
+        
+        /* 模式標籤 */
+        .mode-badge {
+            display: inline-block; padding: 5px 10px; border-radius: 15px; font-size: 0.8em; margin-bottom: 15px;
+            font-weight: bold; color: white;
+        }
+        .mode-normal { background-color: #3498db; }
+        .mode-practice { background-color: #e67e22; }
+
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>檔案載入刷題系統</h1>
+
+    <div class="upload-section" id="upload-section">
+        <h3>請載入題目與答案檔</h3>
+        <div class="upload-row">
+            <label>1. 載入題目 (questions.json)：</label>
+            <input type="file" id="q-file" accept=".json">
+        </div>
+        <div class="upload-row">
+            <label>2. 載入答案 (answers.json)：</label>
+            <input type="file" id="a-file" accept=".json">
+        </div>
+        <div id="status-msg" class="status">等待載入檔案...</div>
+        <button id="start-btn" class="btn-submit" style="display:none;" onclick="initQuiz()">開始測驗</button>
+    </div>
+
+    <div id="quiz-area">
+        <div style="text-align:center;">
+            <span id="mode-indicator" class="mode-badge mode-normal">全題庫模式</span>
+        </div>
+        <div id="score-board" class="score-board"></div>
+        <div id="quiz-container"></div>
+        <div style="text-align: center; margin-top: 30px;">
+            <button type="button" class="btn-submit" onclick="submitQuiz()">交卷並查看分數</button>
+            <button type="button" id="btn-retry-wrong" class="btn-retry-wrong" onclick="startWrongPractice()">練習錯題</button>
+            <button type="button" class="btn-reset" onclick="location.reload()">重置 / 載入新檔</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let questionsData = null; // 原始完整題庫
+    let answersData = null;   // 原始答案
+    
+    let currentQuizList = []; // 當前正在練習的題目列表
+    let wrongQuestionsQueue = []; // 用來暫存錯題，供下一輪使用
+
+    // 監聽檔案載入
+    document.getElementById('q-file').addEventListener('change', function(e) {
+        readFile(e.target.files[0], 'q');
+    });
+    document.getElementById('a-file').addEventListener('change', function(e) {
+        readFile(e.target.files[0], 'a');
+    });
+
+    function readFile(file, type) {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const json = JSON.parse(e.target.result);
+                if (type === 'q') questionsData = json;
+                else answersData = json;
+                checkReady();
+            } catch (err) {
+                alert("檔案格式錯誤，請確認是有效的 JSON 檔");
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    function checkReady() {
+        const status = document.getElementById('status-msg');
+        const btn = document.getElementById('start-btn');
+        
+        if (questionsData && answersData) {
+            status.textContent = "檔案載入完成！請點擊「開始測驗」";
+            status.className = "status ready";
+            btn.style.display = "inline-block";
+        } else if (questionsData) {
+            status.textContent = "題目檔已載入，等待答案檔...";
+        } else if (answersData) {
+            status.textContent = "答案檔已載入，等待題目檔...";
+        }
+    }
+
+    // 初始化測驗 (全題庫模式)
+    function initQuiz() {
+        currentQuizList = [...questionsData]; // 複製一份完整題庫
+        document.getElementById('upload-section').style.display = 'none';
+        document.getElementById('quiz-area').style.display = 'block';
+        
+        updateModeUI("全題庫模式", "mode-normal");
+        renderQuiz();
+    }
+
+    // 開始錯題練習模式
+    function startWrongPractice() {
+        if (wrongQuestionsQueue.length === 0) {
+            alert("沒有錯題需要練習！");
+            return;
+        }
+        
+        // 將錯題設為當前題庫
+        currentQuizList = [...wrongQuestionsQueue];
+        wrongQuestionsQueue = []; // 清空暫存，準備記錄新一輪的錯題
+
+        // 更新介面
+        updateModeUI(`錯題練習模式 (剩餘 ${currentQuizList.length} 題)`, "mode-practice");
+        document.getElementById('score-board').style.display = 'none'; // 隱藏上次分數
+        document.getElementById('btn-retry-wrong').style.display = 'none'; // 隱藏練習按鈕
+        
+        renderQuiz();
+        window.scrollTo(0, 0);
+    }
+
+    function updateModeUI(text, className) {
+        const indicator = document.getElementById('mode-indicator');
+        indicator.textContent = text;
+        indicator.className = `mode-badge ${className}`;
+    }
+
+    function renderQuiz() {
+        const container = document.getElementById('quiz-container');
+        container.innerHTML = currentQuizList.map((q, index) => `
+            <div class="question-card" id="card-${q.id}">
+                <div class="question-title">${q.id}. ${q.q}</div>
+                <div class="options">
+                    ${q.options.map((opt, i) => `
+                        <label id="label-${q.id}-${i}">
+                            <input type="radio" name="q${q.id}" value="${i}">
+                            ${opt}
+                        </label>
+                    `).join('')}
+                </div>
+                <div id="hint-${q.id}" class="answer-hint"></div>
+            </div>
+        `).join('');
+    }
+
+    function submitQuiz() {
+        let score = 0;
+        let total = currentQuizList.length;
+        wrongQuestionsQueue = []; // 重置錯題列表
+
+        currentQuizList.forEach(q => {
+            // 讀取正確答案 (JSON 檔內的索引)
+            let correctAns = answersData[q.id.toString()];
+            
+            const selected = document.querySelector(`input[name="q${q.id}"]:checked`);
+            const hint = document.getElementById(`hint-${q.id}`);
+            
+            // 重置樣式
+            for(let i=0; i<4; i++) {
+                const lbl = document.getElementById(`label-${q.id}-${i}`);
+                if(lbl) lbl.classList.remove('correct', 'wrong');
+            }
+
+            let isCorrect = false;
+
+            if (selected) {
+                const val = parseInt(selected.value);
+                if (val === correctAns) {
+                    score++;
+                    isCorrect = true;
+                    document.getElementById(`label-${q.id}-${val}`).classList.add('correct');
+                } else {
+                    document.getElementById(`label-${q.id}-${val}`).classList.add('wrong');
+                }
+            }
+            
+            // 如果答錯或未答，標記正確答案並加入錯題列表
+            if (!isCorrect) {
+                // 將此題加入錯題佇列
+                wrongQuestionsQueue.push(q);
+
+                // 顯示正確答案
+                if(document.getElementById(`label-${q.id}-${correctAns}`)) {
+                    document.getElementById(`label-${q.id}-${correctAns}`).classList.add('correct');
+                }
+                
+                hint.style.display = 'block';
+                let correctText = q.options[correctAns] ? q.options[correctAns] : "（無法顯示正確選項，請檢查答案檔索引）";
+                let statusText = selected ? "❌ 答錯了！" : "⚠️ 未作答。";
+                hint.innerText = `${statusText} 正確答案是：${correctText}`;
+            }
+        });
+
+        // 顯示分數
+        const board = document.getElementById('score-board');
+        board.style.display = 'block';
+        
+        let resultMsg = `本次得分：${score} / ${total}`;
+        
+        // 判斷是否顯示「練習錯題」按鈕
+        const retryBtn = document.getElementById('btn-retry-wrong');
+        
+        if (wrongQuestionsQueue.length > 0) {
+            retryBtn.style.display = 'inline-block';
+            retryBtn.innerText = `練習錯題 (共 ${wrongQuestionsQueue.length} 題)`;
+            resultMsg += `<br><span style="font-size:0.8em; color:#d35400;">還有 ${wrongQuestionsQueue.length} 題需要加強，點擊下方按鈕進行練習！</span>`;
+        } else {
+            retryBtn.style.display = 'none';
+            resultMsg += `<br><span style="color:#2ecc71;">🎉 太棒了！本輪題目全部答對！</span>`;
+        }
+
+        board.innerHTML = resultMsg;
+        window.scrollTo(0, 0);
+    }
+</script>
+
+</body>
+</html>
+
